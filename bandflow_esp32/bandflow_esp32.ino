@@ -68,7 +68,7 @@ static lv_color_t *displayBuffer2;
 static lv_obj_t *taskLabel;
 static portMUX_TYPE taskMux = portMUX_INITIALIZER_UNLOCKED;
 static char pendingTask[256] = "Waiting for a task...";
-static bool taskChanged = true;
+static volatile bool taskChanged = true;
 
 static void displayFlush(lv_disp_drv_t *driver, const lv_area_t *area,
                          lv_color_t *color) {
@@ -132,7 +132,7 @@ static void updateTaskDisplay() {
   portENTER_CRITICAL(&taskMux);
   changed = taskChanged;
   if (changed) {
-    strncpy(taskCopy, pendingTask, sizeof(taskCopy));
+    memcpy(taskCopy, pendingTask, sizeof(taskCopy));
     taskCopy[sizeof(taskCopy) - 1] = '\0';
     taskChanged = false;
   }
@@ -140,6 +140,9 @@ static void updateTaskDisplay() {
 
   if (changed && taskLabel != nullptr) {
     lv_label_set_text(taskLabel, taskCopy);
+    lv_obj_invalidate(taskLabel);
+    Serial.print("Display updated: ");
+    Serial.println(taskCopy);
   }
 }
 
@@ -209,6 +212,7 @@ void setup() {
 void loop() {
   updateTaskDisplay();
   lv_timer_handler();
+  delay(5);
 
   // Fake a "user tapped done" event every 15 seconds, just so you have
   // something to test the Pi <-> band round trip with before the real
