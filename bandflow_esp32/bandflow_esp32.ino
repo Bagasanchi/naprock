@@ -49,7 +49,7 @@ const unsigned long FAKE_STATUS_INTERVAL_MS = 15000; // every 15 seconds
 
 // Called automatically whenever the Pi writes to TASK_CHAR
 class TaskCallback : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *characteristic) {
+  void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &connInfo) override {
     std::string value = characteristic->getValue();
     Serial.print("Received subtask from Pi: ");
     Serial.println(value.c_str());
@@ -102,3 +102,4 @@ void loop() {
     Serial.println("Sent fake status update: SERGEI GOMO");
   }
 }
+//sergei gomo
