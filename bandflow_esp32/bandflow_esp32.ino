@@ -211,6 +211,7 @@ void setup() {
 
 void loop() {
   updateTaskDisplay();
+  lv_tick_inc(5);
   lv_timer_handler();
   delay(5);
 
