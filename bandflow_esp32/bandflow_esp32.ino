@@ -33,6 +33,115 @@
 */
 
 #include <NimBLEDevice.h>
+#include <Arduino_GFX_Library.h>
+#include <lvgl.h>
+
+#define SCREEN_WIDTH  320
+#define SCREEN_HEIGHT 170
+#define TFT_BL        38
+
+Arduino_DataBus *displayBus = new Arduino_ESP32SPI(
+  11,  // DC
+  10,  // CS
+  12,  // SCK
+  13,  // MOSI
+  GFX_NOT_DEFINED   // MISO
+);
+
+Arduino_GFX *display = new Arduino_GC9A01(
+  displayBus,
+  1,  // reset pin used by the vendor port
+  1,  // rotation
+  true,
+  170,
+  320,
+  35,
+  0,
+  35,
+  0
+);
+
+static lv_disp_draw_buf_t displayBuffer;
+static lv_disp_drv_t displayDriver;
+static lv_color_t *displayBuffer1;
+static lv_color_t *displayBuffer2;
+static lv_obj_t *taskLabel;
+static portMUX_TYPE taskMux = portMUX_INITIALIZER_UNLOCKED;
+static char pendingTask[256] = "Waiting for a task...";
+static bool taskChanged = true;
+
+static void displayFlush(lv_disp_drv_t *driver, const lv_area_t *area,
+                         lv_color_t *color) {
+  uint32_t width = area->x2 - area->x1 + 1;
+  uint32_t height = area->y2 - area->y1 + 1;
+  display->draw16bitRGBBitmap(area->x1, area->y1,
+                              (uint16_t *)&color->full, width, height);
+  lv_disp_flush_ready(driver);
+}
+
+static void setupDisplay() {
+  display->begin(80000000);
+  display->invertDisplay(true);
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+
+  lv_init();
+  displayBuffer1 = (lv_color_t *)heap_caps_malloc(
+    sizeof(lv_color_t) * SCREEN_WIDTH * SCREEN_HEIGHT / 8,
+    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+  );
+  displayBuffer2 = (lv_color_t *)heap_caps_malloc(
+    sizeof(lv_color_t) * SCREEN_WIDTH * SCREEN_HEIGHT / 8,
+    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+  );
+  if (displayBuffer1 == nullptr || displayBuffer2 == nullptr) {
+    Serial.println("Display buffer allocation failed");
+    return;
+  }
+
+  lv_disp_draw_buf_init(&displayBuffer, displayBuffer1, displayBuffer2,
+                        SCREEN_WIDTH * SCREEN_HEIGHT / 8);
+  lv_disp_drv_init(&displayDriver);
+  displayDriver.hor_res = SCREEN_WIDTH;
+  displayDriver.ver_res = SCREEN_HEIGHT;
+  displayDriver.flush_cb = displayFlush;
+  displayDriver.draw_buf = &displayBuffer;
+  lv_disp_drv_register(&displayDriver);
+
+  lv_obj_t *screen = lv_scr_act();
+  lv_obj_set_style_bg_color(screen, lv_color_hex(0x101820), 0);
+  lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+
+  lv_obj_t *heading = lv_label_create(screen);
+  lv_label_set_text(heading, "CURRENT TASK");
+  lv_obj_set_style_text_color(heading, lv_color_hex(0x55D6BE), 0);
+  lv_obj_align(heading, LV_ALIGN_TOP_MID, 0, 20);
+
+  taskLabel = lv_label_create(screen);
+  lv_label_set_text(taskLabel, pendingTask);
+  lv_label_set_long_mode(taskLabel, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(taskLabel, 285);
+  lv_obj_set_style_text_color(taskLabel, lv_color_white(), 0);
+  lv_obj_set_style_text_align(taskLabel, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(taskLabel, LV_ALIGN_CENTER, 0, 5);
+}
+
+static void updateTaskDisplay() {
+  char taskCopy[sizeof(pendingTask)];
+  bool changed;
+  portENTER_CRITICAL(&taskMux);
+  changed = taskChanged;
+  if (changed) {
+    strncpy(taskCopy, pendingTask, sizeof(taskCopy));
+    taskCopy[sizeof(taskCopy) - 1] = '\0';
+    taskChanged = false;
+  }
+  portEXIT_CRITICAL(&taskMux);
+
+  if (changed && taskLabel != nullptr) {
+    lv_label_set_text(taskLabel, taskCopy);
+  }
+}
 
 // These are just random unique IDs (UUIDs) that identify our service
 // and characteristics. They must match EXACTLY on the Raspberry Pi side
@@ -53,13 +162,20 @@ class TaskCallback : public NimBLECharacteristicCallbacks {
     std::string value = characteristic->getValue();
     Serial.print("Received subtask from Pi: ");
     Serial.println(value.c_str());
-    // Later: this is where you'll update the actual screen with `value`
+    portENTER_CRITICAL(&taskMux);
+    strncpy(pendingTask, value.c_str(), sizeof(pendingTask) - 1);
+    pendingTask[sizeof(pendingTask) - 1] = '\0';
+    taskChanged = true;
+    portEXIT_CRITICAL(&taskMux);
   }
 };
 
 void setup() {
   Serial.begin(115200);
+  delay(500);
   Serial.println("Starting BandFlow wristband BLE...");
+
+  setupDisplay();
 
   NimBLEDevice::init("BandFlow-Wristband");
 
@@ -91,6 +207,9 @@ void setup() {
 }
 
 void loop() {
+  updateTaskDisplay();
+  lv_timer_handler();
+
   // Fake a "user tapped done" event every 15 seconds, just so you have
   // something to test the Pi <-> band round trip with before the real
   // touchscreen button exists.
