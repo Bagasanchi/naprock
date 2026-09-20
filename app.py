@@ -7,6 +7,8 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from bleak import BleakClient, BleakScanner
 from flask import Flask, jsonify, request
 
+from files.db import list_tasks
+
 SERVICE_UUID = "12345678-1234-1234-1234-1234567890ab"
 TASK_CHAR_UUID = "12345678-1234-1234-1234-1234567890ac"
 STATUS_CHAR_UUID = "12345678-1234-1234-1234-1234567890ad"
@@ -149,6 +151,11 @@ def status():
     with _status_lock:
         current_status = _latest_status
     return jsonify(status=current_status)
+
+
+@app.get("/tasks")
+def tasks():
+    return jsonify(tasks=list_tasks())
 
 
 @app.post("/task")
